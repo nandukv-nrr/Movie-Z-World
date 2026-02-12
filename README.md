@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="" alt="VJ-Filter-Bot Logo">
+  <img src="" alt="Lokah-Filter-Bot Logo">
 </p>
 <h1 align="center">
   VJ FILTER BOT
@@ -204,4 +204,5 @@ Selling The Codes To Other People For Money Is *Strictly Prohibited*.</b>
 </pre>
 </p>
 </details>
+
 
