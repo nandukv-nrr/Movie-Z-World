@@ -2,7 +2,7 @@
   <img src="" alt="Lokah-Filter-Bot Logo">
 </p>
 <h1 align="center">
-  VJ FILTER BOT
+  LOKAH FILTER BOT
 </h1>
 
 ![Typing SVG](https://readme-typing-svg.herokuapp.com/?lines=Welcome+To+VJ+Filter+Bot!)
@@ -204,5 +204,6 @@ Selling The Codes To Other People For Money Is *Strictly Prohibited*.</b>
 </pre>
 </p>
 </details>
+
 
 
