@@ -51,12 +51,6 @@ async def _edit_result_message(target_message, caption, reply_markup):
     except MessageNotModified:
         pass
 
-async def _safe_delete_message(message):
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
 async def _render_result_page(target_message, context_message, settings, search, files, total_results, key, offset=0, back_callback=None, started_at=None, pagination_total=None, keyboard_page_size=None):
     page_size = keyboard_page_size or get_result_page_size(settings)
     caption = await get_cap(
@@ -697,8 +691,8 @@ async def auto_filter(client, name, msg, reply_msg, ai_search, spoll=False):
         result_message = await reply_msg.edit_text(text=caption, reply_markup=reply_markup, disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
 
     await asyncio.sleep(300)
-    await _safe_delete_message(result_message)
-    await _safe_delete_message(message)
+    await result_message.delete()
+    await message.delete()
 
 async def advantage_spell_chok(client, name, msg, reply_msg, vj_search):
     mv_id = msg.id
