@@ -2,7 +2,7 @@
 # Subscribe YouTube Channel For Amazing Bot @Tech_VJ
 # Ask Doubt on telegram @KingVJ01
 
-import logging, asyncio, os, re, random, pytz, aiohttp, requests, string, json, http.client
+import logging, asyncio, os, re, random, pytz, aiohttp, requests, string, json, http.client, math
 from info import *
 from imdb import Cinemagoer 
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,6 +16,7 @@ from database.users_chats_db import db
 from database.join_reqs import JoinReqs
 from bs4 import BeautifulSoup
 from shortzy import Shortzy
+from html import escape
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -239,6 +240,146 @@ def get_size(size):
         i += 1
         size /= 1024.0
     return "%.2f %s" % (size, units[i])
+
+def clean_file_display_name(file_name):
+    if not file_name:
+        return "Unknown file"
+    return ' '.join(
+        filter(
+            lambda part: not part.startswith('[') and not part.startswith('@') and not part.startswith('www.'),
+            str(file_name).split()
+        )
+    ).strip() or "Unknown file"
+
+def truncate_text(text, max_length=52):
+    text = re.sub(r"\s+", " ", str(text)).strip()
+    if len(text) <= max_length:
+        return text
+    return text[:max_length - 3].rstrip() + "..."
+
+def format_file_button_label(file_data, max_name_length=48):
+    return f"{get_size(file_data.get('file_size', 0))} | {truncate_text(clean_file_display_name(file_data.get('file_name')), max_name_length)}"
+
+def get_result_page_size(settings):
+    try:
+        return 10 if settings.get("max_btn", True) else int(MAX_B_TN)
+    except (AttributeError, TypeError, ValueError):
+        return 10
+
+def get_result_page_state(total_results, offset, page_size):
+    safe_total = max(int(total_results or 0), 1)
+    safe_offset = max(int(offset or 0), 0)
+    safe_page_size = max(int(page_size or 10), 1)
+    current_page = (safe_offset // safe_page_size) + 1
+    total_pages = max(1, math.ceil(safe_total / safe_page_size))
+    prev_offset = safe_offset - safe_page_size if safe_offset > 0 else None
+    next_offset = safe_offset + safe_page_size if (safe_offset + safe_page_size) < int(total_results or 0) else None
+    return current_page, total_pages, prev_offset, next_offset
+
+def build_pagination_row(req, key, current_page, total_pages, prev_offset, next_offset):
+    return [[
+        InlineKeyboardButton("Prev", callback_data=f"next_{req}_{key}_{prev_offset}" if prev_offset is not None else "pages"),
+        InlineKeyboardButton(f"Page {current_page}/{total_pages}", callback_data="pages"),
+        InlineKeyboardButton("Next", callback_data=f"next_{req}_{key}_{next_offset}" if next_offset is not None else "pages"),
+    ]]
+
+def build_result_keyboard(files, key, req, offset, total_results, pre, page_size, back_callback=None, pagination_total=None):
+    page_total = total_results if pagination_total is None else pagination_total
+    current_page, total_pages, prev_offset, next_offset = get_result_page_state(page_total, offset, page_size)
+    rows = [
+        [
+            InlineKeyboardButton("Send All", callback_data=f"sendfiles#{key}"),
+            InlineKeyboardButton("Languages", callback_data=f"languages#{key}"),
+            InlineKeyboardButton("Years", callback_data=f"years#{key}")
+        ],
+        [
+            InlineKeyboardButton("Quality", callback_data=f"qualities#{key}"),
+            InlineKeyboardButton("Episodes", callback_data=f"episodes#{key}"),
+            InlineKeyboardButton("Seasons", callback_data=f"seasons#{key}")
+        ],
+    ]
+
+    for file_data in files:
+        rows.append([
+            InlineKeyboardButton(
+                text=format_file_button_label(file_data),
+                callback_data=f"{pre}#{file_data['file_id']}"
+            )
+        ])
+
+    rows.extend(build_pagination_row(req, key, current_page, total_pages, prev_offset, next_offset))
+
+    if back_callback:
+        rows.append([InlineKeyboardButton("Back to Results", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(rows)
+
+def build_filter_menu_keyboard(menu_type, key, values, callback_prefix, columns, back_callback):
+    headings = {
+        "year": "Choose Year",
+        "episode": "Choose Episode",
+        "language": "Choose Language",
+        "season": "Choose Season",
+        "quality": "Choose Quality",
+    }
+    rows = [[InlineKeyboardButton(headings.get(menu_type, "Choose Option"), callback_data="pages")]]
+
+    for index in range(0, len(values), columns):
+        rows.append([
+            InlineKeyboardButton(
+                str(value).title(),
+                callback_data=f"{callback_prefix}#{str(value).lower()}#{key}"
+            )
+            for value in values[index:index + columns]
+        ])
+
+    rows.append([InlineKeyboardButton("Back to Results", callback_data=back_callback)])
+    return InlineKeyboardMarkup(rows)
+
+def build_result_caption(
+    search,
+    requester_mention,
+    response_seconds,
+    chat_title,
+    total_results,
+    current_page,
+    total_pages,
+    auto_delete_enabled=True,
+    imdb_caption=None,
+    include_file_links=False,
+    files=None,
+    bot_username=None,
+):
+    auto_delete_text = "5 minutes" if auto_delete_enabled else "Off"
+    header = "\n".join([
+        "<b>Search Results</b>",
+        f"<b>Query:</b> {escape(str(search or 'Unknown'))}",
+        f"<b>Requested by:</b> {requester_mention}",
+        f"<b>Results:</b> {int(total_results or 0)}",
+        f"<b>Page:</b> {current_page}/{total_pages}",
+        f"<b>Response time:</b> {escape(str(response_seconds))} seconds",
+        f"<b>Source:</b> {escape(str(chat_title or 'Private Chat'))}",
+        f"<b>Auto-delete:</b> {auto_delete_text}",
+    ])
+
+    parts = [header]
+    if imdb_caption:
+        parts.append(imdb_caption)
+    elif not include_file_links:
+        parts.append("<b>Choose a file from the buttons below.</b>")
+
+    if include_file_links and files and bot_username:
+        file_lines = ["<b>Files</b>"]
+        for file_data in files:
+            file_lines.append(
+                f"<a href='https://telegram.me/{bot_username}?start=files_{file_data['file_id']}'>{escape(format_file_button_label(file_data, 58))}</a>"
+            )
+        parts.append("\n".join(file_lines))
+
+    caption = "\n\n".join(part for part in parts if part)
+    if imdb_caption and not include_file_links and len(caption) > 1024:
+        return imdb_caption
+    return caption
 
 def split_list(l, n):
     for i in range(0, len(l), n):
@@ -650,64 +791,72 @@ async def send_all(bot, userid, files, ident, chat_id, user_name, query):
     except Exception as e:
         await query.answer('Hᴇʏ, Sᴛᴀʀᴛ Bᴏᴛ Fɪʀsᴛ Aɴᴅ Cʟɪᴄᴋ Sᴇɴᴅ Aʟʟ', show_alert=True)
         
-async def get_cap(settings, remaining_seconds, files, query, total_results, search):
-    if settings["imdb"]:
-        IMDB_CAP = temp.IMDB_CAP.get(query.from_user.id)
-        if IMDB_CAP:
-            cap = IMDB_CAP
-            cap+="<b>\n\n<u>🍿 Your Movie Files 👇</u></b>\n\n"
-            for file in files:
-                cap += f"<b>📁 <a href='https://telegram.me/{temp.U_NAME}?start=files_{file['file_id']}'>[{get_size(file['file_size'])}] {' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), file['file_name'].split()))}\n\n</a></b>"
-        else:
-            imdb = await get_poster(search, file=(files[0])["file_name"]) if settings["imdb"] else None
-            if imdb:
-                TEMPLATE = script.IMDB_TEMPLATE_TXT
-                cap = TEMPLATE.format(
-                    qurey=search,
-                    title=imdb['title'],
-                    votes=imdb['votes'],
-                    aka=imdb["aka"],
-                    seasons=imdb["seasons"],
-                    box_office=imdb['box_office'],
-                    localized_title=imdb['localized_title'],
-                    kind=imdb['kind'],
-                    imdb_id=imdb["imdb_id"],
-                    cast=imdb["cast"],
-                    runtime=imdb["runtime"],
-                    countries=imdb["countries"],
-                    certificates=imdb["certificates"],
-                    languages=imdb["languages"],
-                    director=imdb["director"],
-                    writer=imdb["writer"],
-                    producer=imdb["producer"],
-                    composer=imdb["composer"],
-                    cinematographer=imdb["cinematographer"],
-                    music_team=imdb["music_team"],
-                    distributors=imdb["distributors"],
-                    release_date=imdb['release_date'],
-                    year=imdb['year'],
-                    genres=imdb['genres'],
-                    poster=imdb['poster'],
-                    plot=imdb['plot'],
-                    rating=imdb['rating'],
-                    url=imdb['url'],
-                    **locals()
-                )
-                cap+="<b>\n\n<u>🍿 Your Movie Files 👇</u></b>\n\n"
-                for file in files:
-                    cap += f"<b>📁 <a href='https://telegram.me/{temp.U_NAME}?start=files_{file['file_id']}'>[{get_size(file['file_size'])}] {' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), file['file_name'].split()))}\n\n</a></b>"
-            else:
-                cap = f"<b>Tʜᴇ Rᴇꜱᴜʟᴛꜱ Fᴏʀ ☞ {search}\n\nRᴇǫᴜᴇsᴛᴇᴅ Bʏ ☞ {query.from_user.mention}\n\nʀᴇsᴜʟᴛ sʜᴏᴡ ɪɴ ☞ {remaining_seconds} sᴇᴄᴏɴᴅs\n\nᴘᴏᴡᴇʀᴇᴅ ʙʏ ☞ : {query.message.chat.title}\n\n⚠️ ᴀꜰᴛᴇʀ 5 ᴍɪɴᴜᴛᴇꜱ ᴛʜɪꜱ ᴍᴇꜱꜱᴀɢᴇ ᴡɪʟʟ ʙᴇ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴅᴇʟᴇᴛᴇᴅ 🗑️\n\n</b>"
-                cap+="<b><u>🍿 Your Movie Files 👇</u></b>\n\n"
-                for file in files:
-                    cap += f"<b>📁 <a href='https://telegram.me/{temp.U_NAME}?start=files_{file['file_id']}'>[{get_size(file['file_size'])}] {' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), file['file_name'].split()))}\n\n</a></b>"
-    else:
-        cap = f"<b>Tʜᴇ Rᴇꜱᴜʟᴛꜱ Fᴏʀ ☞ {search}\n\nRᴇǫᴜᴇsᴛᴇᴅ Bʏ ☞ {query.from_user.mention}\n\nʀᴇsᴜʟᴛ sʜᴏᴡ ɪɴ ☞ {remaining_seconds} sᴇᴄᴏɴᴅs\n\nᴘᴏᴡᴇʀᴇᴅ ʙʏ ☞ : {query.message.chat.title} \n\n⚠️ ᴀꜰᴛᴇʀ 5 ᴍɪɴᴜᴛᴇꜱ ᴛʜɪꜱ ᴍᴇꜱꜱᴀɢᴇ ᴡɪʟʟ ʙᴇ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴅᴇʟᴇᴛᴇᴅ 🗑️\n\n</b>"
-        cap+="<b><u>🍿 Your Movie Files 👇</u></b>\n\n"
-        for file in files:
-            cap += f"<b>📁 <a href='https://telegram.me/{temp.U_NAME}?start=files_{file['file_id']}'>[{get_size(file['file_size'])}] {' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), file['file_name'].split()))}\n\n</a></b>"
-    return cap
+async def get_cap(settings, remaining_seconds, files, query, total_results, search, offset=0, page_size=None):
+    source_message = query.message if hasattr(query, "message") else query
+    requester = source_message.from_user.mention if getattr(source_message, "from_user", None) else "Unknown"
+    chat_title = getattr(source_message.chat, "title", None) or "Private Chat"
+    auto_delete_enabled = settings.get("auto_delete", True)
+    page_size = page_size or get_result_page_size(settings)
+    current_page, total_pages, _, _ = get_result_page_state(total_results, offset, page_size)
+    result_key = f"{source_message.chat.id}-{source_message.id}" if getattr(source_message, "chat", None) else None
 
+    imdb_caption = None
+    user_id = getattr(getattr(source_message, "from_user", None), "id", None)
+    if settings.get("imdb") and user_id:
+        imdb_caption = temp.IMDB_CAP.get(result_key) or temp.IMDB_CAP.get(user_id)
+
+    if settings.get("imdb") and not imdb_caption and files:
+        imdb = await get_poster(search, file=files[0]["file_name"])
+        if imdb:
+            imdb_caption = script.IMDB_TEMPLATE_TXT.format(
+                qurey=search,
+                title=imdb['title'],
+                votes=imdb['votes'],
+                aka=imdb["aka"],
+                seasons=imdb["seasons"],
+                box_office=imdb['box_office'],
+                localized_title=imdb['localized_title'],
+                kind=imdb['kind'],
+                imdb_id=imdb["imdb_id"],
+                cast=imdb["cast"],
+                runtime=imdb["runtime"],
+                countries=imdb["countries"],
+                certificates=imdb["certificates"],
+                languages=imdb["languages"],
+                director=imdb["director"],
+                writer=imdb["writer"],
+                producer=imdb["producer"],
+                composer=imdb["composer"],
+                cinematographer=imdb["cinematographer"],
+                music_team=imdb["music_team"],
+                distributors=imdb["distributors"],
+                release_date=imdb['release_date'],
+                year=imdb['year'],
+                genres=imdb['genres'],
+                poster=imdb['poster'],
+                plot=imdb['plot'],
+                rating=imdb['rating'],
+                url=imdb['url'],
+            )
+            if result_key:
+                temp.IMDB_CAP[result_key] = imdb_caption
+            if user_id:
+                temp.IMDB_CAP[user_id] = imdb_caption
+
+    return build_result_caption(
+        search=search,
+        requester_mention=requester,
+        response_seconds=remaining_seconds,
+        chat_title=chat_title,
+        total_results=total_results,
+        current_page=current_page,
+        total_pages=total_pages,
+        auto_delete_enabled=auto_delete_enabled,
+        imdb_caption=imdb_caption,
+        include_file_links=not settings.get("button", True),
+        files=files,
+        bot_username=temp.U_NAME,
+    )
 
 async def get_seconds(time_string):
     def extract_value_and_unit(ts):
