@@ -241,13 +241,22 @@ def get_size(size):
         size /= 1024.0
     return "%.2f %s" % (size, units[i])
 
+def normalize_file_name(file_name):
+    text = str(file_name or "")
+    text = re.sub(r"\.(mkv|mp4|avi|m4v|mov|wmv|flv|webm|ts)$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[._]+", " ", text)
+    text = re.sub(r"[\[\]\(\)\{\}]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or "Unknown file"
+
 def clean_file_display_name(file_name):
     if not file_name:
         return "Unknown file"
+    text = normalize_file_name(file_name)
     return ' '.join(
         filter(
-            lambda part: not part.startswith('[') and not part.startswith('@') and not part.startswith('www.'),
-            str(file_name).split()
+            lambda part: not part.lower().startswith('@') and not part.lower().startswith('www.'),
+            text.split()
         )
     ).strip() or "Unknown file"
 
@@ -257,8 +266,107 @@ def truncate_text(text, max_length=52):
         return text
     return text[:max_length - 3].rstrip() + "..."
 
+def extract_series_metadata(file_name):
+    text = clean_file_display_name(file_name)
+    season = None
+    episode = None
+
+    match = re.search(r"\bS(\d{1,2})\s*E(\d{1,3})\b", text, flags=re.IGNORECASE)
+    if match:
+        season = int(match.group(1))
+        episode = int(match.group(2))
+    else:
+        match = re.search(r"\bSeason\s*(\d{1,2})\s*Episode\s*(\d{1,3})\b", text, flags=re.IGNORECASE)
+        if match:
+            season = int(match.group(1))
+            episode = int(match.group(2))
+
+    if season is None:
+        match = re.search(r"\bSeason\s*(\d{1,2})\b", text, flags=re.IGNORECASE)
+        if match:
+            season = int(match.group(1))
+        else:
+            match = re.search(r"\bS(\d{1,2})\b", text, flags=re.IGNORECASE)
+            if match:
+                season = int(match.group(1))
+
+    if episode is None:
+        match = re.search(r"\b(?:Episode|Ep)\s*(\d{1,3})\b", text, flags=re.IGNORECASE)
+        if match:
+            episode = int(match.group(1))
+
+    if season is not None and episode is not None:
+        return f"S{season:02d}E{episode:02d}"
+    if season is not None:
+        return f"Season {season}"
+    if episode is not None:
+        return f"Ep {episode:02d}"
+    return None
+
+def extract_quality_token(file_name):
+    text = clean_file_display_name(file_name)
+    match = re.search(r"\b(2160p|1080p|720p|480p|360p|4k)\b", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    quality = match.group(1)
+    return quality.upper() if quality.lower() == "4k" else quality.lower()
+
+def extract_source_token(file_name):
+    text = clean_file_display_name(file_name)
+    source_patterns = [
+        (r"\bWEB[\s-]?DL\b", "WEB-DL"),
+        (r"\bWEB[\s-]?Rip\b", "WEBRip"),
+        (r"\bBlu[\s-]?Ray\b", "BluRay"),
+        (r"\bHDRip\b", "HDRip"),
+    ]
+    for pattern, label in source_patterns:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return label
+    return None
+
+def strip_media_metadata_from_title(file_name):
+    title = clean_file_display_name(file_name)
+    cleanup_patterns = [
+        r"\bS\d{1,2}\s*E\d{1,3}\b",
+        r"\bSeason\s*\d{1,2}\s*Episode\s*\d{1,3}\b",
+        r"\bSeason\s*\d{1,2}\b",
+        r"\bS\d{1,2}\b",
+        r"\b(?:Episode|Ep)\s*\d{1,3}\b",
+        r"\b(?:2160p|1080p|720p|480p|360p|4k)\b",
+        r"\bWEB[\s-]?DL\b",
+        r"\bWEB[\s-]?Rip\b",
+        r"\bBlu[\s-]?Ray\b",
+        r"\bHDRip\b",
+        r"\b(?:HEVC|x264|x265|H264|H265|AAC|DDP5?\.?1|DD5?\.?1|10bit|ESub|Multi)\b",
+    ]
+    for pattern in cleanup_patterns:
+        title = re.sub(pattern, " ", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+-\s+", " ", title)
+    title = re.sub(r"\s+", " ", title).strip(" -")
+    return title or clean_file_display_name(file_name)
+
 def format_file_button_label(file_data, max_name_length=48):
-    return f"{get_size(file_data.get('file_size', 0))} | {truncate_text(clean_file_display_name(file_data.get('file_name')), max_name_length)}"
+    file_name = file_data.get("file_name")
+    size_text = get_size(file_data.get("file_size", 0))
+    season_episode = extract_series_metadata(file_name)
+    quality = extract_quality_token(file_name)
+    source = extract_source_token(file_name)
+    title = strip_media_metadata_from_title(file_name)
+
+    priority_parts = [part for part in [season_episode, quality] if part]
+    if source:
+        projected = " | ".join(priority_parts + [source, title])
+        if len(projected) <= max_name_length:
+            priority_parts.append(source)
+
+    reserved_length = sum(len(part) for part in priority_parts)
+    if priority_parts:
+        reserved_length += 3 * len(priority_parts)
+    title_budget = max(14, max_name_length - reserved_length)
+    title_text = truncate_text(title, title_budget)
+
+    detail_parts = priority_parts + [title_text]
+    return f"{size_text} | {' | '.join(part for part in detail_parts if part)}"
 
 def get_result_page_size(settings):
     try:
