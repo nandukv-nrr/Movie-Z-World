@@ -77,6 +77,75 @@ def is_file_already_saved(file_id, file_name):
             
     return False
 
+def _normalize_media_name(file_name):
+    text = str(file_name or "")
+    text = re.sub(r"\.(mkv|mp4|avi|m4v|mov|wmv|flv|webm|ts)$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[._]+", " ", text)
+    text = re.sub(r"[\[\]\(\)\{\}]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.lower()
+
+def _extract_media_sort_key(file_name):
+    normalized = _normalize_media_name(file_name)
+    title = normalized
+    season = -1
+    episode = -1
+    quality_rank = -1
+
+    match = re.search(r"\bs(\d{1,2})\s*e(\d{1,3})\b", normalized, flags=re.IGNORECASE)
+    if match:
+        season = int(match.group(1))
+        episode = int(match.group(2))
+        title = re.sub(r"\bs\d{1,2}\s*e\d{1,3}\b", " ", title, flags=re.IGNORECASE)
+    else:
+        match = re.search(r"\bseason\s*(\d{1,2})\s*episode\s*(\d{1,3})\b", normalized, flags=re.IGNORECASE)
+        if match:
+            season = int(match.group(1))
+            episode = int(match.group(2))
+            title = re.sub(r"\bseason\s*\d{1,2}\s*episode\s*\d{1,3}\b", " ", title, flags=re.IGNORECASE)
+
+    if season == -1:
+        match = re.search(r"\bseason\s*(\d{1,2})\b", normalized, flags=re.IGNORECASE)
+        if match:
+            season = int(match.group(1))
+            title = re.sub(r"\bseason\s*\d{1,2}\b", " ", title, flags=re.IGNORECASE)
+        else:
+            match = re.search(r"\bs(\d{1,2})\b", normalized, flags=re.IGNORECASE)
+            if match:
+                season = int(match.group(1))
+                title = re.sub(r"\bs\d{1,2}\b", " ", title, flags=re.IGNORECASE)
+
+    if episode == -1:
+        match = re.search(r"\b(?:episode|ep)\s*(\d{1,3})\b", normalized, flags=re.IGNORECASE)
+        if match:
+            episode = int(match.group(1))
+            title = re.sub(r"\b(?:episode|ep)\s*\d{1,3}\b", " ", title, flags=re.IGNORECASE)
+
+    quality_match = re.search(r"\b(2160p|1080p|720p|480p|360p|4k)\b", normalized, flags=re.IGNORECASE)
+    if quality_match:
+        quality_text = quality_match.group(1).lower()
+        quality_rank_map = {
+            "4k": 4000,
+            "2160p": 2160,
+            "1080p": 1080,
+            "720p": 720,
+            "480p": 480,
+            "360p": 360,
+        }
+        quality_rank = quality_rank_map.get(quality_text, -1)
+
+    title = re.sub(r"\b(2160p|1080p|720p|480p|360p|4k|web[\s-]?dl|web[\s-]?rip|bluray|hdrip|hevc|x264|x265|aac|10bit)\b", " ", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+", " ", title).strip()
+
+    has_series_meta = 0 if (season != -1 or episode != -1) else 1
+    season_sort = season if season != -1 else 10**6
+    episode_sort = episode if episode != -1 else 10**6
+    quality_sort = -quality_rank if quality_rank != -1 else 0
+    return (has_series_meta, title, season_sort, episode_sort, quality_sort, normalized)
+
+def sort_search_results(files):
+    return sorted(files, key=lambda item: _extract_media_sort_key(item.get("file_name")))
+
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
     """For given query return (results, next_offset)"""
     
@@ -94,19 +163,21 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     filter = {'file_name': regex}
     files = []
     if MULTIPLE_DATABASE:
-        cursor1 = col.find(filter).sort('$natural', -1).skip(offset).limit(max_results)
-        cursor2 = sec_col.find(filter).sort('$natural', -1).skip(offset).limit(max_results)
+        cursor1 = col.find(filter)
+        cursor2 = sec_col.find(filter)
         
         for file in cursor1:
             files.append(file)
         for file in cursor2:
             files.append(file)
     else:
-        cursor = col.find(filter).sort('$natural', -1).skip(offset).limit(max_results)
+        cursor = col.find(filter)
         
         for file in cursor:
             files.append(file)
 
+    files = sort_search_results(files)
+    files = files[offset:offset + max_results]
     total_results = col.count_documents(filter) if not MULTIPLE_DATABASE else (col.count_documents(filter) + sec_col.count_documents(filter))
     next_offset = "" if (offset + max_results) >= total_results else (offset + max_results)
 

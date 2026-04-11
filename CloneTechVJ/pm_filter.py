@@ -14,7 +14,7 @@ from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerId
 from pyrogram.errors.exceptions.bad_request_400 import MediaEmpty, PhotoInvalidDimensions, WebpageMediaEmpty
 from utils import get_size, is_subscribed, pub_is_subscribed, get_poster, search_gagala, temp, get_settings, save_group_settings, get_shortlink, get_tutorial, send_all, get_cap, build_result_keyboard, build_filter_menu_keyboard, get_result_page_size
 from database.users_chats_db import db
-from database.ia_filterdb import get_file_details, get_search_results, get_bad_files
+from database.ia_filterdb import get_file_details, get_search_results, get_bad_files, sort_search_results
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
@@ -405,6 +405,8 @@ async def filter_seasons_cb_handler(client: Client, query: CallbackQuery):
                 seen_ids.add(file_data["file_id"])
                 files.append(file_data)
 
+    files = sort_search_results(files)
+
     if not files:
         return await query.answer("No file found for this filter.", show_alert=True)
 
@@ -766,6 +768,5 @@ async def advantage_spell_chok(client, name, msg, reply_msg, vj_search):
         )
         await asyncio.sleep(600)
         await spell_check_del.delete()
-
 
 
