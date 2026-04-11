@@ -85,21 +85,6 @@ def _normalize_media_name(file_name):
     text = re.sub(r"\s+", " ", text).strip()
     return text.lower()
 
-def _normalize_search_query(query):
-    return _normalize_media_name(query)
-
-def _build_contains_filter_regex(query):
-    normalized_query = _normalize_search_query(query)
-    if not normalized_query:
-        return re.compile(".", flags=re.IGNORECASE)
-
-    tokens = [re.escape(token) for token in normalized_query.split() if token]
-    if not tokens:
-        return re.compile(".", flags=re.IGNORECASE)
-
-    pattern = ".*".join(tokens)
-    return re.compile(pattern, flags=re.IGNORECASE)
-
 def _extract_media_sort_key(file_name):
     normalized = _normalize_media_name(file_name)
     title = normalized
@@ -164,8 +149,15 @@ def sort_search_results(files):
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
     """For given query return (results, next_offset)"""
     
+    query = query.strip()
+    if not query:
+        raw_pattern = '.'
+    elif ' ' not in query:
+        raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
+    else:
+        raw_pattern = query.replace(' ', r'.*[\s\.\+\-_]')
     try:
-        regex = _build_contains_filter_regex(query)
+        regex = re.compile(raw_pattern, flags=re.IGNORECASE)
     except:
         regex = query
     filter = {'file_name': regex}
